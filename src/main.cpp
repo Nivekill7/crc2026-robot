@@ -250,12 +250,195 @@ angles::AngleMovingAvg lift_averager(0.2), pitch_averager(0.2), roll_averager(0.
 float input, output, setpoint = 0;
 QuickPID pid(&input, &output, &setpoint,
              FIELD_CENTRIC_P, FIELD_CENTRIC_I, FIELD_CENTRIC_D, QuickPID::Action::reverse);
-
+bool flag_precision = false;
 /**
  * ============
  * SETUP & LOOP
  * ============
  */
+
+void soft_kill()
+{
+    CrcLib::SetPwmOutput(WHEEL_BL_M_p, 0);
+    CrcLib::SetPwmOutput(WHEEL_BR_M_p, 0);
+    CrcLib::SetPwmOutput(WHEEL_FL_M_p, 0);
+    CrcLib::SetPwmOutput(WHEEL_FR_M_p, 0);
+    CrcLib::SetPwmOutput(LIFT_L_M_p, 0);
+    CrcLib::SetPwmOutput(LIFT_R_M_p, 0);
+    CrcLib::SetPwmOutput(MANIP_PITCH_M_p, 0);
+    CrcLib::SetPwmOutput(MANIP_ROLL_M_p, 0);
+    // manip_belt_a.write(0);
+    // manip_belt_b.write(0);
+    pid.SetOutputSum(0);
+}
+
+// Leds
+#include <Adafruit_NeoPixel.h>
+#define LED_PIN CRC_PWM_11
+#define NUM_LEDS 12
+
+Adafruit_NeoPixel strip1(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+void init_led_strip(Adafruit_NeoPixel &strip)
+{
+    strip.begin();
+    strip.setBrightness(100); // baisse si alim instable
+    strip.clear();
+    strip.show();
+}
+void init_state_machine()
+{
+}
+
+typedef enum LEDMode
+{
+    POSITION_MOTEUR,
+    SORT_LA_PIECE_DU_MANIP,
+    RECUPERE_PIECE_VERTICALE,
+    RECUPERE_PIECE_HORIZONTALE,
+    SEMI_MANUEL_AVEC_PIECE,
+    SEMI_MANUEL_PIECE_SORT,
+    VITESSE_LENTE,
+    VITESSE_DEFAULT,
+    MAX
+};
+LEDMode current_state_machine = VITESSE_DEFAULT;
+// LEDMode current_led2_mode = VITESSE_DEFAULT; // Si pont H fonctionne pas
+const uint8_t roll_buffer = 10; // 10 degrees de tolérance pour différencier les pièces verticales des horizontales
+
+const uint8_t default_bitmap = B00000000;
+auto bitmap = default_bitmap;
+uint8_t lecture_manette()
+{
+    if (CrcLib::ReadDigitalChannel(BUTTON::SELECT))
+        bitmap &= (1 << LEDMode::POSITION_MOTEUR);
+}
+
+LEDMode update_state_machine()
+{
+    if (digitalRead(BEAM_p)) // si on a une piece dans le manip
+    {
+        uint16_t pich, roll, lift;
+        pich = pitch_averager.calc().template convert<domain::continuous>().template translate<unit::degrees>().value;
+        roll = roll_averager.calc().template convert<domain::continuous>().template translate<unit::degrees>().value;
+        lift = lift_averager.calc().template convert<domain::continuous>().template translate<unit::degrees>().value;
+
+        roll %= 180;
+        if (roll > 90 - roll_buffer && roll < 90 + roll_buffer) // si on a une piece verticale
+        {
+            return RECUPERE_PIECE_VERTICALE;
+        }
+        else if (roll > 180 - roll_buffer && roll > 0 + roll_buffer) // sinon on a une piece horizontale
+        {
+            return RECUPERE_PIECE_HORIZONTALE;
+        }
+    }
+}
+
+const int LED_FLASH_DURATION = 100;
+void FLASH_HALF(Adafruit_NeoPixel &strip, Color color1, Color color2, uint8_t speed = 1)
+{
+    static uint32_t chrono = millis();
+    static bool state = false;
+
+    if (millis() - chrono >= LED_FLASH_DURATION * speed)
+    {
+        chrono = millis();
+        state = !state;
+    }
+    if (state)
+    {
+        for (int i = 0; i < strip.numPixels() / 2; i++)
+        {
+            strip.setPixelColor(i, color1.r, color1.g, color1.b);
+        }
+        for (int i = strip.numPixels() / 2; i < strip.numPixels(); i++)
+        {
+            strip.setPixelColor(i, color2.r, color2.g, color2.b);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < strip.numPixels() / 2; i++)
+        {
+            strip.setPixelColor(i, color2.r, color2.g, color2.b);
+        }
+        for (int i = strip.numPixels() / 2; i < strip.numPixels(); i++)
+        {
+            strip.setPixelColor(i, color1.r, color1.g, color1.b);
+        }
+    }
+}
+
+const Color orange = {255, 40, 0};
+const Color blue = {0, 0, 255};
+
+void led_Show(uint8_t mode, Adafruit_NeoPixel &strip)
+{
+    static bool state = false;
+    switch (mode)
+    {
+    case (POSITION_MOTEUR): // LED ROUGE
+
+        strip.fill(strip.Color(255, 0, 0));
+        break;
+
+    case (SORT_LA_PIECE_DU_MANIP): // LED FLASH ROUGE
+
+        static uint32_t chrono1 = millis();
+        if (millis() - chrono1 >= LED_FLASH_DURATION)
+        {
+            chrono1 = millis();
+            state = !state;
+        }
+        state ? strip.fill(strip.Color(255, 0, 0)) : strip.fill(strip.Color(0, 0, 0));
+        break;
+
+    case (RECUPERE_PIECE_VERTICALE): // LED FLASH VERT RAPIDE
+
+        static uint32_t chrono2 = millis();
+        if (millis() - chrono2 >= LED_FLASH_DURATION)
+        {
+            chrono2 = millis();
+            state = !state;
+        }
+        state ? strip.fill(strip.Color(0, 255, 0)) : strip.fill(strip.Color(0, 0, 0));
+        break;
+
+    case (RECUPERE_PIECE_HORIZONTALE): // LED FLASH VERT moitier moitier RAPIDE
+
+        FLASH_HALF(strip, {0, 255, 0}, {0, 0, 0});
+        break;
+
+    case (SEMI_MANUEL_AVEC_PIECE): // LED MAUVE
+
+        strip.fill(strip.Color(255, 0, 255));
+        break;
+
+    case (SEMI_MANUEL_PIECE_SORT): // LED MAUVE FLASH LENTEMENT
+
+        static uint32_t chrono4 = millis();
+        if (millis() - chrono4 >= LED_FLASH_DURATION)
+        {
+            chrono4 = millis();
+            state = !state;
+        }
+        state ? strip.fill(strip.Color(255, 0, 255)) : strip.fill(strip.Color(0, 0, 0));
+        break;
+
+    case (VITESSE_DEFAULT): // LED ORANGE BLEU FLASH FADE CEGEP MOYEN VITE
+
+        FLASH_HALF(strip, orange, blue, 4);
+        break;
+
+    case (VITESSE_LENTE): // ^^ MOINS VITE
+
+        FLASH_HALF(strip, orange, blue, 6);
+        break;
+    }
+
+    strip.show();
+}
 
 void setup()
 {
@@ -287,24 +470,12 @@ void setup()
     pid.SetOutputLimits(-FIELD_CENTRIC_OUTPUT_LIM, FIELD_CENTRIC_OUTPUT_LIM);
 }
 
-void soft_kill()
-{
-    CrcLib::SetPwmOutput(WHEEL_BL_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_BR_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_FL_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_FR_M_p, 0);
-    CrcLib::SetPwmOutput(LIFT_L_M_p, 0);
-    CrcLib::SetPwmOutput(LIFT_R_M_p, 0);
-    CrcLib::SetPwmOutput(MANIP_PITCH_M_p, 0);
-    CrcLib::SetPwmOutput(MANIP_ROLL_M_p, 0);
-    // manip_belt_a.write(0);
-    // manip_belt_b.write(0);
-    pid.SetOutputSum(0);
-}
-
 void loop()
 {
     CrcLib::Update();
+
+    // RESET STATE MACHINE
+    bitmap = default_bitmap;
 
     /**
      * ------
@@ -453,6 +624,12 @@ void loop()
         joysticks_clean.left.y *= REDUCTION;
         joysticks_clean.right.x *= REDUCTION;
         joysticks_clean.right.y *= REDUCTION;
+
+        bitmap &= (1 << LEDMode::VITESSE_LENTE);
+    }
+    else
+    {
+        bitmap &= (1 << LEDMode::VITESSE_DEFAULT);
     }
 
     if (true && pid.Compute())
@@ -533,5 +710,9 @@ void loop()
 
         /* field centric PID info */
         // Serial.println("input: " + String(input) + "\toutput: " + String(output));
+
+        // state machine
+        current_state_machine = update_state_machine();
+        led_Show(current_state_machine, strip1);
     }
 }
