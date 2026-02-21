@@ -508,8 +508,8 @@ angles::AngleMovingAvg lift_averager(0.2), pitch_averager(0.2), roll_averager(0.
 float input, output, setpoint = 0;
 QuickPID pid(&input, &output, &setpoint,
              FIELD_CENTRIC_P, FIELD_CENTRIC_I, FIELD_CENTRIC_D, QuickPID::Action::reverse);
-bool flag_precision = false;
-/**
+
+             /**
  * ============
  * SETUP & LOOP
  * ============
@@ -733,7 +733,7 @@ void setup()
     pitch_pid.SetMode(QuickPID::Control::automatic);
     CONFIG_ROLL_PID(roll_pid);
     roll_pid.SetMode(QuickPID::Control::automatic);
-}
+
     pid.SetMode(QuickPID::Control::automatic);
     pid.SetSampleTimeUs(1000 / FIELD_CENTRIC_SAMPLE_FREQ_HZ);
     pid.SetOutputLimits(-FIELD_CENTRIC_OUTPUT_LIM, FIELD_CENTRIC_OUTPUT_LIM);
