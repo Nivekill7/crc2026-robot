@@ -61,7 +61,7 @@ namespace angles
          * convert an angle from one domain to the other
          */
         template <domain target_d>
-        constexpr angle<target_d, U> convert()
+        constexpr angle<target_d, U> convert() const
         {
             if constexpr (target_d == D)
                 return {this->value};
@@ -79,7 +79,7 @@ namespace angles
          * translate an angle from one unit to the other
          */
         template <unit target_u>
-        constexpr angle<D, target_u> translate()
+        constexpr angle<D, target_u> translate() const
         {
             if constexpr (target_u == U)
                 return *this;
@@ -89,7 +89,7 @@ namespace angles
                 return {this->value * angle<D, unit::degrees>::max_a() / angle<D, unit::radians>::max_a()};
         }
 
-        constexpr angle<domain::mirror, U> travel(const angle<D, U> to)
+        constexpr angle<domain::mirror, U> travel(const angle<D, U> &to) const
         {
             auto from_v = this->normalize().template convert<domain::continuous>().value;
             auto to_v = to.normalize().template convert<domain::continuous>().value;
@@ -108,17 +108,21 @@ namespace angles
             }
         }
 
-        constexpr angle<D, U> normalize()
+        constexpr angle<D, U> normalize() const
         {
             if constexpr (D == domain::continuous)
             {
-                auto value = fmod(this->value, angle<domain::continuous, U>::max_a());
+                auto max = angle<domain::continuous, U>::max_a();
+                auto numtimes = this->value/max;
+                auto moded = this->value - (floor(numtimes) * max);
+                auto value = moded;
+
                 if (value < 0)
                     value += angle<domain::continuous, U>::max_a();
                 return {value};
             }
             else
-                return this->template convert<domain::continuous>().normalize().template convert<domain::mirror>(); // convert<domain::mirror>(wrap(convert<domain::continuous>(a)));
+                return this->template convert<domain::continuous>().normalize().template convert<domain::mirror>();
         }
 
         /**
