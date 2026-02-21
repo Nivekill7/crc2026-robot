@@ -417,7 +417,6 @@ void CONFIG_PITCH_PID(QuickPID &pid)
 }
 
 /* fucakll/misc */
-const double LIFT_CM_PER_RAD = 1;
 const float PRECISION_MODE_REDUCTION = 0.3;
 const float LIFT_ENCO_SMOOTHING = 0.1,
             PITCH_ENCO_SMOOTHING = 0.1,
@@ -501,36 +500,8 @@ void soft_kill()
     lift_pid.SetOutputSum(0);
 }
 
-CrcLib::Timer print_timer, battery_low_timeout;
+// LEDS / STATE MACHINE 
 
-ReadPWM lift_PWM(LIFT_E_p), pitch_PWM(MANIP_PITCH_E_p), roll_PWM(MANIP_ROLL_E_p);
-PwmToAngleConverter lift_converter, pitch_converter, roll_converter;
-angles::AngleMovingAvg lift_averager(0.2), pitch_averager(0.2), roll_averager(0.2);
-
-float input, output, setpoint = 0;
-QuickPID pid(&input, &output, &setpoint,
-             FIELD_CENTRIC_P, FIELD_CENTRIC_I, FIELD_CENTRIC_D, QuickPID::Action::reverse);
-
-             /**
- * ============
- * SETUP & LOOP
- * ============
- */
-
-void soft_kill()
-{
-    CrcLib::SetPwmOutput(WHEEL_BL_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_BR_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_FL_M_p, 0);
-    CrcLib::SetPwmOutput(WHEEL_FR_M_p, 0);
-    CrcLib::SetPwmOutput(LIFT_L_M_p, 0);
-    CrcLib::SetPwmOutput(LIFT_R_M_p, 0);
-    CrcLib::SetPwmOutput(MANIP_PITCH_M_p, 0);
-    CrcLib::SetPwmOutput(MANIP_ROLL_M_p, 0);
-    // manip_belt_a.write(0);
-    // manip_belt_b.write(0);
-    pid.SetOutputSum(0);
-}
 
 // Leds
 #include <Adafruit_NeoPixel.h>
@@ -563,8 +534,6 @@ typedef enum LEDMode
     MAX
 };
 LEDMode current_state_machine = VITESSE_DEFAULT;
-// LEDMode current_led2_mode = VITESSE_DEFAULT; // Si pont H fonctionne pas
-const uint8_t roll_buffer = 10; // 10 degrees de tolérance pour différencier les pièces verticales des horizontales
 
 const uint8_t default_bitmap = B00000000;
 auto bitmap = default_bitmap;
@@ -574,6 +543,7 @@ uint8_t lecture_manette()
         bitmap &= (1 << LEDMode::POSITION_MOTEUR);
 }
 
+const uint8_t roll_buffer = 10; // 10 degrees de tolérance pour différencier les pièces verticales des horizontales
 LEDMode update_state_machine()
 {
     if (digitalRead(BEAM_p)) // si on a une piece dans le manip
@@ -699,6 +669,11 @@ void led_Show(uint8_t mode, Adafruit_NeoPixel &strip)
 
     strip.show();
 }
+//
+
+
+
+
 
 void setup()
 {
@@ -737,17 +712,12 @@ void setup()
     CONFIG_ROLL_PID(roll_pid);
     roll_pid.SetMode(QuickPID::Control::automatic);
 
-    pid.SetMode(QuickPID::Control::automatic);
-    pid.SetSampleTimeUs(1000 / FIELD_CENTRIC_SAMPLE_FREQ_HZ);
-    pid.SetOutputLimits(-FIELD_CENTRIC_OUTPUT_LIM, FIELD_CENTRIC_OUTPUT_LIM);
+    init_led_strip(strip1);
 }
 
 void loop()
 {
     CrcLib::Update();
-
-    // RESET STATE MACHINE
-    bitmap = default_bitmap;
 
     /**
      * ------
@@ -917,12 +887,6 @@ void loop()
         joysticks_clean.left.y *= PRECISION_MODE_REDUCTION;
         joysticks_clean.right.x *= PRECISION_MODE_REDUCTION;
         joysticks_clean.right.y *= PRECISION_MODE_REDUCTION;
-
-        bitmap &= (1 << LEDMode::VITESSE_LENTE);
-    }
-    else
-    {
-        bitmap &= (1 << LEDMode::VITESSE_DEFAULT);
     }
 
     if (false && field_centric.update(current_rotation))
@@ -1057,10 +1021,5 @@ void loop()
         {
             Serial.println("current orientation: " + String(current_rotation.value));
         }
-        // Serial.println("input: " + String(input) + "\toutput: " + String(output));
-
-        // state machine
-        current_state_machine = update_state_machine();
-        led_Show(current_state_machine, strip1);
     }
 }
