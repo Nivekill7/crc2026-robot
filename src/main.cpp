@@ -517,9 +517,6 @@ void init_led_strip(Adafruit_NeoPixel &strip)
     strip.clear();
     strip.show();
 }
-void init_state_machine()
-{
-}
 
 typedef enum LEDMode
 {
@@ -717,6 +714,10 @@ void setup()
 
 void loop()
 {
+
+    //Activer les leds pour le mode AL au moins
+    led_Show(VITESSE_DEFAULT, strip1);
+
     CrcLib::Update();
 
     /**
