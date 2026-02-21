@@ -370,6 +370,7 @@ const pin_t BEAM_p = CRC_DIG_1;
 
 /* timings */
 const uint32_t PRINT_TIMER_DELAY = hz(20);
+const uint32_t CONTROLLER_POLL_DELAY = hz(20);
 
 /* PID configurations*/
 void CONFIG_FIELD_CENTRIC_PID(QuickPID &pid)
@@ -386,8 +387,8 @@ void CONFIG_FIELD_CENTRIC_PID(QuickPID &pid)
 void CONFIG_LIFT_PID(QuickPID &pid)
 {
     pid.SetTunings(
-        80,
-        0,
+        120,
+        0.1,
         0);
     pid.SetSampleTimeUs(hz(50));
     pid.SetControllerDirection(QuickPID::Action::direct);
@@ -407,10 +408,11 @@ void CONFIG_ROLL_PID(QuickPID &pid)
 void CONFIG_PITCH_PID(QuickPID &pid)
 {
     pid.SetTunings(
-        1,
+        40,
         0,
         0);
     pid.SetSampleTimeUs(hz(50));
+    pid.SetControllerDirection(QuickPID::Action::reverse);
     pid.SetOutputLimits(-20, 20);
 }
 
@@ -427,7 +429,7 @@ const float LIFT_ENCO_SMOOTHING = 0.1,
  * ========================
  */
 
-CrcLib::Timer print_timer, battery_low_timeout;
+CrcLib::Timer print_timer, battery_low_timeout, controller_poll_timer;
 
 /* lift and manipulator*/
 Servo manip_belt_a, manip_belt_b;
@@ -440,7 +442,7 @@ PwmToAngleConverter
                        .template translate<unit::radians>()
                        .value),
     pitch_converter(true,
-                    angle<domain::continuous, unit::degrees>::from(184.5) // 185-182
+                    angle<domain::continuous, unit::degrees>::from(174.5) // 185-182
                         .template translate<unit::radians>()
                         .value), // range: 0-57deg
     roll_converter(false,        // NOTE: for some reason, the real 90deg is read at 105deg
@@ -456,8 +458,8 @@ QuickPID roll_pid(&pitch_ios.input, &pitch_ios.output, &pitch_ios.setpoint);
 SmartHinge pitch_hinge(
     pitch_pid,
     pitch_ios,
-    angle<domain::continuous, unit::radians>::from(0),  // GUILLAUME: hard stop LOW bound     ******************************************
-    angle<domain::continuous, unit::radians>::from(0)); // GUILLAUME: hard stop HIGH bound   ******************************************
+    angle<domain::continuous, unit::radians>::from(0),   // GUILLAUME: hard stop LOW bound     ******************************************
+    angle<domain::continuous, unit::radians>::from(57)); // GUILLAUME: hard stop HIGH bound   ******************************************
 SmartHinge roll_hinge(
     roll_pid,
     roll_ios,
@@ -724,6 +726,7 @@ void setup()
     manip_belt_b.write(1500);
 
     print_timer.Start(PRINT_TIMER_DELAY);
+    controller_poll_timer.Start(CONTROLLER_POLL_DELAY);
 
     CONFIG_FIELD_CENTRIC_PID(field_centric_pid);
     field_centric_pid.SetMode(QuickPID::Control::automatic); // starts the PID
@@ -850,26 +853,49 @@ void loop()
         }
     }
 
+    if (controller_poll_timer.IsFinished())
     {
-        /* LIFT */
-        const float lift_speed = M_PI / 100;          // set value in rads
-        auto current_lift_angle = lift_hinge._target; //  lift_averager.calc();
-        if (trig_R)
+        controller_poll_timer.Start(CONTROLLER_POLL_DELAY);
         {
-            auto val = current_lift_angle.value + lift_speed;
-            val = val > angle<domain::continuous, unit::radians>::max_a() ? angle<domain::continuous, unit::radians>::max_a() : val;
-            lift_hinge.set_target(angle<domain::continuous, unit::radians>::from(val));
+            /* LIFT */
+            const float lift_speed = M_PI / 10;           // set value in rads
+            auto current_lift_angle = lift_hinge._target; //  lift_averager.calc();
+            if (trig_R)
+            {
+                auto val = current_lift_angle.value + lift_speed;
+                val = val > angle<domain::continuous, unit::radians>::max_a() ? angle<domain::continuous, unit::radians>::max_a() : val;
+                lift_hinge.set_target(angle<domain::continuous, unit::radians>::from(val));
+            }
+            else if (trig_L)
+            {
+                auto val = current_lift_angle.value - lift_speed;
+                val = val < angle<domain::continuous, unit::radians>::min_a() ? angle<domain::continuous, unit::radians>::min_a() : val;
+                lift_hinge.set_target(angle<domain::continuous, unit::radians>::from(val));
+            }
         }
-        else if (trig_L)
         {
-            auto val = current_lift_angle.value - lift_speed;
-            val = val < angle<domain::continuous, unit::radians>::min_a() ? angle<domain::continuous, unit::radians>::min_a() : val;
-            lift_hinge.set_target(angle<domain::continuous, unit::radians>::from(val));
+            /* PITCH */
+            auto current = pitch_averager.calc().template convert<domain::continuous>();
+            auto speed = M_PI/10; // 0.1pi/sec
+            if (CrcLib::ReadDigitalChannel(BUTTON::ARROW_UP))
+            {
+                float v = current.value + speed;
+                if (v > angle<domain::continuous, unit::radians>::max_a())
+                {
+                    v = angle<domain::continuous, unit::radians>::max_a();
+                }
+                pitch_hinge.set_target({v});
+            }
+            if (CrcLib::ReadDigitalChannel(BUTTON::ARROW_DOWN))
+            {
+                float v = current.value - speed;
+                if (v < angle<domain::continuous, unit::radians>::min_a())
+                {
+                    v = angle<domain::continuous, unit::radians>::min_a();
+                }
+                pitch_hinge.set_target({v});
+            }
         }
-    }
-
-    {
-        /*  */
     }
 
     /**
@@ -997,7 +1023,7 @@ void loop()
         }
 
         /* controller trigger states */
-        if (true)
+        if (false)
         {
             Serial.println("triggers:\tL:" + String(trig_L) + "\tR: " + String(trig_R));
         }
@@ -1018,6 +1044,12 @@ void loop()
         if (true)
         {
             Serial.println("input: " + String(lift_ios.input) + "\toutput: " + String(lift_ios.output) + "\ttarget: " + String(lift_hinge._target.template translate<unit::degrees>().value));
+        }
+
+        /* pitch PID info */
+        if (false)
+        {
+            Serial.println("input: " + String(pitch_ios.input) + "\toutput: " + String(pitch_ios.output) + "\ttarget: " + String(pitch_hinge._target.template translate<unit::degrees>().value));
         }
 
         /* orientation */

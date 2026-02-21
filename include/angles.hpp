@@ -113,7 +113,7 @@ namespace angles
             if constexpr (D == domain::continuous)
             {
                 auto max = angle<domain::continuous, U>::max_a();
-                auto numtimes = this->value/max;
+                auto numtimes = this->value / max;
                 auto moded = this->value - (floor(numtimes) * max);
                 auto value = moded;
 
@@ -124,6 +124,30 @@ namespace angles
             else
                 return this->template convert<domain::continuous>().normalize().template convert<domain::mirror>();
         }
+
+        // constexpr angle<D, U> clamp() const
+        // {
+        //     else if constexpr (D == domain::continuous)
+        //         return {this->value < 0
+        //                     ? angle<domain::continuous, U>::max_a() + this->value
+        //                     : this->value};
+        //     else
+        //         return {this->value >= half<U>()
+        //                     ? -angle<domain::continuous, U>::max_a() + this->value
+        //                     : this->value};
+        //     if constexpr (D == domain::continuous)
+        //     {
+        //         auto max = angle<domain::continuous, U>::max_a();
+        //         auto numtimes = this->value / max;
+        //         auto moded = this->value - (floor(numtimes) * max);
+        //         auto value = moded;
+        //         if (value < 0)
+        //             value += angle<domain::continuous, U>::max_a();
+        //         return {value};
+        //     }
+        //     else
+        //         return this->template convert<domain::continuous>().normalize().template convert<domain::mirror>();
+        // }
 
         /**
          * automatically normalizes
